@@ -60,7 +60,7 @@
  :http-with-hmac
  (fn [req]
    (doall (for [{:keys [url path method success failure headers key secret]}
-                (if (map? req) [req] req)
+               (if (map? req) [req] req)
                 :let [[evt rfn & more] success]]
             (let [timestamp (js/Date.now)]
               (js/console.log "timestamp:" timestamp "key" key)
