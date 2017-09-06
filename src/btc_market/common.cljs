@@ -3,6 +3,7 @@
             [reagent.core :as r]))
 
 (def ReactNative (js/require "react-native"))
+(def socket-io (js/require "socket.io-client"))
 
 (def list-view (r/adapt-react-class (.-ListView ReactNative)))
 (def scroll-view (r/adapt-react-class (.-ScrollView ReactNative)))
@@ -34,9 +35,7 @@
   (.setItem storage (str key) (pr-str value)))
 
 (defn retrieve [key on-ready on-fail]
-  (js/console.log "retrieving " key)
   (.getItem storage (str key)
             #(do
-               (js/console.log "params:" %1 "," %2)
                (if %1 (on-fail %1)
                    (if %2 (on-ready (read-string %2)))))))

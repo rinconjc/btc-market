@@ -9,7 +9,6 @@
                  "XRP" "Ripple Exchange"
                  "BCH" "Bcash"})
 ;; spec of app-db
-(s/def ::greeting string?)
 (s/def ::curpair string?)
 (s/def ::cur-pairs (s/* ::curpair))
 (s/def ::amount double?)
@@ -30,12 +29,26 @@
 (s/def ::balance-item (s/keys :req-un [::currency ::pendingFunds ::balance]))
 (s/def ::balances (s/coll-of ::balance-item))
 (s/def ::account (s/keys :req-un [::balances]))
+(s/def ::instrument ::currency)
+(s/def ::orderSide #{"Bid" "Ask"})
+(s/def ::ordertype #{"Limit" "Market"})
+(s/def ::created inst?)
+(s/def ::status #{"New" "Placed" "Failed" "Error" "Cancelled" "Partially Cancelled"
+                  "Fully Matched" "Partially Matched"})
+(s/def ::errorMessage (s/or :nil nil? :some string?))
+(s/def ::volume ::amount)
+(s/def ::openVolume ::amount)
+(s/def ::id int?)
+
+(s/def ::order (s/keys :req-un [::id ::currency ::instrument ::orderSide
+                                ::ordertype ::status ::price ::volume]
+                       :opt-un [::openVolume ::errorMessage ::created]))
+(s/def ::orders (s/coll-of ::order))
 (s/def ::app-db
-  (s/keys :req-un [::view-stack ::greeting ::cur-pairs]
+  (s/keys :req-un [::view-stack ::cur-pairs]
           :opt-un [::prices ::interval ::socket ::config
-                   ::account]))
+                   ::account ::orders]))
 
 ;; initialn state of app-db
 (def app-db {:view-stack [#'coin-prices-view]
-             :greeting "Hello Clojure in iOS and Android!"
              :cur-pairs ["BTC/AUD" "ETH/AUD"]})

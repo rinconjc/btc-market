@@ -16,6 +16,7 @@
   :aliases {"prod-build" ^{:doc "Recompile code with prod profile."}
             ["do" "clean"
              ["with-profile" "prod" "cljsbuild" "once"]]}
+  :test-paths ["test"]
   :profiles {:dev {:dependencies [[figwheel-sidecar "0.5.10"]
                                   [com.cemerick/piggieback "0.2.1"]]
                    :source-paths ["src" "env/dev"]

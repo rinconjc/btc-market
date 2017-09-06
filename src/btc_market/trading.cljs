@@ -1,12 +1,10 @@
 (ns btc-market.trading
-  (:require [re-frame.core :refer [subscribe]]
-            [re-frame.core :refer [dispatch]]
-            [reagent.core :as r]
+  (:require [btc-market.common :as c :refer [refresh-control]]
             [btc-market.db :refer [currencies]]
-            [btc-market.common :as c]))
+            [re-frame.core :refer [dispatch subscribe]]
+            [reagent.core :as r]))
 
-
-(defn trading-view []
+(defn buy-sell-view []
   (let [prices (subscribe [:coin-prices])
         field-style (-> c/col-style (dissoc :width :padding))
         picker-style (dissoc field-style :font-size)
@@ -48,3 +46,28 @@
         [c/text {:style field-style} (str "Total: " (* (:price @new-trade) (:volume @new-trade)))]
         [c/button {:title (str "Buy " (or (:currency @new-trade) "..."))
                    :on-press #(js/console.log "buy!")}]]])))
+
+(defn open-orders-view []
+  (let [trades (subscribe [:open-orders])
+        col-style {:font-size 16  :color "#fff" :padding 5}]
+    (dispatch [:fetch-open-orders])
+    (fn []
+      [c/scroll-view {:style c/screen-style :height "100%"
+                      :content-container-style {:align-items "center"}
+                      :refresh-control (r/as-element
+                                        [refresh-control {:on-refresh #(dispatch [:fetch-open-orders])
+                                                          :refreshing false}])}
+       [c/text {:style c/title-style} "Open Orders"]
+
+       (for [{:keys [id instrument orderSide ordertype price status openVolume]} @trades]
+         ^{:key id}
+         [c/view {:style (assoc c/col-style :width "100%")}
+          [c/view {:style c/row-style}
+           [c/text {:style col-style} (str orderSide "/" ordertype)]
+           [c/text {:style col-style} instrument]
+           [c/text {:style col-style} status]]
+          [c/view {:style c/row-style}
+           [c/text {:style col-style} "Price:"]
+           [c/text {:style col-style} price]
+           [c/text {:style col-style} "Open Volume:"]
+           [c/text {:style col-style} openVolume]]])])))

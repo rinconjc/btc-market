@@ -7,9 +7,11 @@
             [btc-market.common :refer [crypto-utils]]
             [btc-market.common :refer [retrieve]]
             [btc-market.common :refer [save]]
-            [btc-market.common :refer [retrieve]]))
+            [btc-market.common :refer [retrieve]]
+            [btc-market.common :refer [socket-io]]))
 
-(def btc-url "https://api.btcmarkets.net/")
+(def btc-url "https://api.btcmarkets.net")
+;;(def btc-url "http://10.0.2.2:8080")
 (def ROUND_NUM 100000000)
 
 (def fetch (.-fetch js/window))
@@ -30,18 +32,15 @@
     (after (partial check-and-throw ::db/app-db))
     []))
 
-;; ---------- web sockets ---------------------------------
-(defn setup-websocket []
-  (doto (js/io "https://socket.btcmarkets.net" #js {"secure" true "transports" #js ["websocket"]
-                                                    "upgrade" false})
-    (.on "connect" #(dispatch [:join-channel]))
-    (.on "newTicker" #(dispatch [:new-ticker (js->clj % :keywordize-keys true) ROUND_NUM]))
-    (.on "disconnect" #(dispatch [:ws-closed %]))))
-
 ;; -- FX handlers -----------------------------------------------------------
 
-(defn http-fetch [{:keys [url headers success failure]}]
-  (-> (fetch url #js {:headers (clj->js headers)})
+
+
+(defn http-fetch [{:keys [url method body headers success failure]}]
+  (-> (fetch url #js {:method (or (some-> method name)  "get")
+                      :headers (clj->js headers)
+                      :body body
+                      :guard "immutable"})
       (.then #(if (.-ok %) (.json %)
                   (throw (.text %))))
       (.then #(as-> % data (js->clj data :keywordize-keys true)
@@ -59,14 +58,17 @@
 (reg-fx
  :http-with-hmac
  (fn [req]
-   (doall (for [{:keys [url path method success failure headers key secret]}
-               (if (map? req) [req] req)
+   (doall (for [{:keys [url path method body success failure headers key secret]}
+                (if (map? req) [req] req)
                 :let [[evt rfn & more] success]]
-            (let [timestamp (js/Date.now)]
-              (js/console.log "timestamp:" timestamp "key" key)
-              (.hmac crypto-utils secret (str path "\n" timestamp "\n")
+            (let [timestamp (js/Date.now)
+                  body-str (some-> body clj->js js/JSON.stringify)]
+              (js/console.log "timestamp:" timestamp "key" key "body:" body-str)
+              (.hmac crypto-utils secret (str path "\n" timestamp "\n" body-str)
                      (fn [signature]
                        (http-fetch {:url (str url path)
+                                    :method method
+                                    :body body-str
                                     :headers {"Accept" "application/json"
                                               "Accept-Charset" "UTF-8"
                                               "Content-Type" "application/json"
@@ -75,6 +77,17 @@
                                               "signature" signature}
                                     :success #(dispatch (vec (concat [evt (rfn %)] more)))
                                     :failure #(dispatch (vec (conj failure %)))}))))))))
+
+(reg-fx
+ :setup-websocket
+ (fn setup-websocket []
+   (let [socket (socket-io "https://socket.btcmarkets.net"
+                           #js {"secure" true "transports" #js ["websocket"]
+                                "upgrade" false})]
+     (doto socket
+       (.on "connect" #(dispatch [:ws-connected socket]))
+       (.on "newTicker" #(dispatch [:new-ticker (js->clj % :keywordize-keys true) ROUND_NUM]))
+       (.on "disconnect" #(dispatch [:ws-closed %]))))))
 
 (reg-fx
  :dispatch-interval
@@ -98,10 +111,10 @@
  validate-spec
  (fn [_ _]
    (js/console.log "in initialize-db")
-   {:db (assoc app-db
-               :socket (setup-websocket))
+   {:db app-db
     :dispatch [:fetch-prices]
-    :read-store [:config [:update-config] [:log]]}))
+    :read-store [:config [:update-config] [:log]]
+    :setup-websocket nil}))
 
 (reg-event-db
  :set-greeting
@@ -109,11 +122,16 @@
  (fn [db [_ value]]
    (assoc db :greeting value)))
 
+(reg-event-fx
+ :ws-connected
+ (fn [{:keys[db]} [_ socket]]
+   {:db (assoc db :socket socket)
+    :dispatch [:join-channel]}))
+
 (reg-event-db
  :join-channel
  validate-spec
  (fn [db [_]]
-   (js/console.log "join channels!")
    (let [socket (:socket db)]
      (doseq [cur-pair (:cur-pairs db)]
        (.emit socket "join" (str "Ticker-BTCMarkets-" (str/replace-first cur-pair "/" "-")))))
@@ -124,7 +142,6 @@
  validate-spec
  (fn [db [_ ticker scale]]
    (let [{:keys [instrument currency lastPrice bestBid bestAsk]} ticker]
-     (js/console.log "new-ticker:" currency lastPrice bestBid bestAsk)
      (update db :prices assoc (str instrument "/" currency)
              {:price (/ lastPrice scale)
               :bid (/ bestBid scale)
@@ -141,7 +158,6 @@
  :fetch-prices
  validate-spec
  (fn [world [_]]
-   (js/console.log "fetching prices")
    {:db (:db world)
     :http (for [curpair (:cur-pairs (:db world))]
             {:url (str btc-url "/market/" curpair "/tick")
@@ -163,15 +179,14 @@
  :account-updated
  validate-spec
  (fn [db [_ balances]]
-   (js/console.log "updating balances" balances)
    (update db :account assoc
-           :balances (for [bal balances :when (not (zero? (:balance bal)))]
-                       (-> bal (update :balance / 1000000000))))))
+           :balances (for [bal balances :when (pos? (:balance bal))]
+                       (-> bal (update :balance / ROUND_NUM))))))
 
 (reg-event-db
  :log
  (fn [db [_ value & more]]
-   (js/console.log "log:" value more)
+   (js/console.log "log:" (clj->js value) more)
    db))
 
 (reg-event-db
@@ -192,3 +207,24 @@
  (fn [{:keys [db]} [_ config]]
    {:db (assoc db :config config)
     :write-store [:config config]}))
+
+(reg-event-fx
+ :fetch-open-orders
+ validate-spec
+ (fn [{:keys [db]} [_]]
+   {:db db
+    :http-with-hmac
+    {:url btc-url :path "/order/open"
+     :method :post
+     :body  {:currency "AUD" :instrument "ETH" :limit 10 :since 1}
+     :key (-> db :config :api-key)
+     :secret (-> db :config :api-secret)
+     :failure [:log]
+     :success [:orders-retrieved identity]}}))
+
+(reg-event-db
+ :orders-retrieved
+ validate-spec
+ (fn [db [_ response]]
+   (assoc db :orders (for [ord (:orders response)]
+                       (reduce #(update %1 %2 / ROUND_NUM) ord [:volume :price :openVolume])))))

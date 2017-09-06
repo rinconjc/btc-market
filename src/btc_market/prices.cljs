@@ -26,7 +26,8 @@
          ^{:key cur}
          [view {:style {:flex-direction "row" :width "100%"
                         :background-color "#818181"}}
-          [text {:style {:font-size 16 :width "34%" :color "#fff" :padding 5}} cur]
+          [text {:style {:font-size 16 :width "34%" :color "#fff" :padding 5}
+                 :on-long-press #(js/console.log "long pressed!") } cur]
           [text {:style {:font-size 16 :width "22%" :color "#fff" :padding 5}} price]
           [text {:style {:font-size 16 :width "22%" :color "#fff" :padding 5}} bid]
           [text {:style {:font-size 16 :width "22%" :color "#fff" :padding 5}} ask]])])))

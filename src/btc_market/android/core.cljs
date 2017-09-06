@@ -5,7 +5,7 @@
             [btc-market.prices :refer [coin-prices-view]]
             [btc-market.settings :refer [settings-view]]
             btc-market.subs
-            [btc-market.trading :refer [trading-view]]
+            [btc-market.trading :refer [buy-sell-view open-orders-view]]
             [re-frame.core :refer [dispatch dispatch-sync subscribe]]
             [reagent.core :as r]))
 
@@ -29,12 +29,14 @@
                          {:title "Accounts" :show "ifRoom"}
                          {:title "Prices" :show "always"}
                          {:title "Buy/Sell" :show "always"}
+                         {:title "Open Orders" :show "ifRoom"}
                          {:title "Market Data" :show "ifRoom"}]
                :on-action-selected
                #(dispatch [:push-view
                            (nth [#'settings-view #'accounts-view
-                                 #'coin-prices-view #'trading-view] %)])}]
-     [@top-view]]))
+                                 #'coin-prices-view #'buy-sell-view
+                                 #'open-orders-view] %)])}]
+     [(or @top-view #'coin-prices-view)]]))
 
 (defn init []
   (.addEventListener (.-BackHandler ReactNative) "hardwareBackPress"

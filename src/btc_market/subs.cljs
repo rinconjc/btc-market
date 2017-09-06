@@ -27,6 +27,6 @@
    (:account db)))
 
 (reg-sub
- :open-trades
+ :open-orders
  (fn [db _]
-   (:trades db)))
+   (:orders db)))
