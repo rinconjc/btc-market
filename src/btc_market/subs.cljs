@@ -2,9 +2,10 @@
   (:require [re-frame.core :refer [reg-sub]]))
 
 (reg-sub
-  :get-greeting
-  (fn [db _]
-    (:greeting db)))
+ :active-instrument-data
+ (fn [db _]
+   (let [instrument (:active-instrument db)]
+     (or  (get (:market-data db) instrument ) {:instrument instrument}))))
 
 (reg-sub
  :coin-prices
@@ -28,5 +29,6 @@
 
 (reg-sub
  :open-orders
- (fn [db _]
-   (:orders db)))
+ (fn [db [_ instrument]]
+   (let [instrument (or instrument (:active-instrument db))]
+     (filter #(= (:instrument %) instrument) (:orders db)))))

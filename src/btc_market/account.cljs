@@ -10,7 +10,8 @@
               title-style
               view]]
             [re-frame.core :refer [dispatch subscribe]]
-            [reagent.core :as r]))
+            [reagent.core :as r]
+            [btc-market.common :as c]))
 
 (defn accounts-view []
   (let [accounts (subscribe [:account])]
@@ -26,4 +27,4 @@
          ^{:key currency}
          [view {:style row-style}
           [text {:style col-style} currency]
-          [text {:style col-style} balance]])])))
+          [text {:style col-style} (c/truncate balance 3)]])])))

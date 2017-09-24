@@ -1,5 +1,5 @@
 (ns btc-market.events
-  (:require [btc-market.db :as db :refer [app-db]]
+  (:require [btc-market.db :as db ]
             [clojure.spec.alpha :as s]
             [re-frame.core :refer [after dispatch reg-event-db reg-event-fx reg-fx]]
             [cljsjs.socket-io]
@@ -8,11 +8,16 @@
             [btc-market.common :refer [retrieve]]
             [btc-market.common :refer [save]]
             [btc-market.common :refer [retrieve]]
-            [btc-market.common :refer [socket-io]]))
+            [btc-market.common :refer [socket-io]]
+            [btc-market.trading :refer [buy-sell-view]]
+            [btc-market.common :as c]
+            [btc-market.prices :refer [dashboard-view]]))
 
 (def btc-url "https://api.btcmarkets.net")
-;;(def btc-url "http://10.0.2.2:8080")
 (def ROUND_NUM 100000000)
+
+;; initialn state of app-db
+(def app-db {:active-instrument "BTC"})
 
 (def fetch (.-fetch js/window))
 (defn json [data] (-> (.-JSON js/window) (.parse data) js->clj))
@@ -104,23 +109,20 @@
  (fn [[key value]]
    (if value (save key value))))
 
+(reg-fx
+ :join-ticker-channel
+ (fn [[socket instrument]]
+   (.emit socket "join" (str "Ticker-BTCMarkets-" instrument "-AUD"))))
 ;; -- Handlers --------------------------------------------------------------
 
 (reg-event-fx
  :initialize-db
  validate-spec
  (fn [_ _]
-   (js/console.log "in initialize-db")
    {:db app-db
-    :dispatch [:fetch-prices]
+    :dispatch [:push-view #'dashboard-view] ;;[:fetch-prices (:active-instrument app-db)]
     :read-store [:config [:update-config] [:log]]
     :setup-websocket nil}))
-
-(reg-event-db
- :set-greeting
- validate-spec
- (fn [db [_ value]]
-   (assoc db :greeting value)))
 
 (reg-event-fx
  :ws-connected
@@ -133,8 +135,8 @@
  validate-spec
  (fn [db [_]]
    (let [socket (:socket db)]
-     (doseq [cur-pair (:cur-pairs db)]
-       (.emit socket "join" (str "Ticker-BTCMarkets-" (str/replace-first cur-pair "/" "-")))))
+     (doseq [instrument (:active-instrument db)]
+       (.emit socket "join" (str "Ticker-BTCMarkets-" (str instrument "-AUD")))))
    db))
 
 (reg-event-db
@@ -142,8 +144,9 @@
  validate-spec
  (fn [db [_ ticker scale]]
    (let [{:keys [instrument currency lastPrice bestBid bestAsk]} ticker]
-     (update db :prices assoc (str instrument "/" currency)
-             {:price (/ lastPrice scale)
+     (update db :market-data assoc instrument
+             {:instrument instrument
+              :price (/ lastPrice scale)
               :bid (/ bestBid scale)
               :ask (/ bestAsk scale)}))))
 
@@ -151,15 +154,23 @@
  :ws-closed
  validate-spec
  (fn [db [_]]
-   (js/console.log "ws closed!")))
+   (dissoc db :socket)))
+
+(reg-event-fx
+ :set-active-instrument
+ validate-spec
+ (fn [{:keys [db]} [_ new-instrument]]
+   {:db (assoc db :active-instrument new-instrument)
+    :dispatch-n [[:fetch-prices new-instrument] [:fetch-open-orders new-instrument]]
+    :join-ticker-channel [(:socket db) new-instrument]}))
 
 ;; (reg-event-db)
 (reg-event-fx
  :fetch-prices
  validate-spec
- (fn [world [_]]
+ (fn [world [_ instrument]]
    {:db (:db world)
-    :http (for [curpair (:cur-pairs (:db world))]
+    :http (for [curpair (or (some-> instrument (str "/AUD") vector) (:active-instrument (:db world)))]
             {:url (str btc-url "/market/" curpair "/tick")
              :success [:new-ticker identity 1]
              :failure [:log curpair]})}))
@@ -186,14 +197,15 @@
 (reg-event-db
  :log
  (fn [db [_ value & more]]
-   (js/console.log "log:" (clj->js value) more)
+   (js/console.log "log:" value more)
+   (c/alert "Error" (:errorMessage value))
    db))
 
 (reg-event-db
  :push-view
  validate-spec
- (fn [db [_ view]]
-   (update db :view-stack #(cons view %))))
+ (fn [db [_ view & more]]
+   (update db :view-stack #(cons [view more] %))))
 
 (reg-event-db
  :pop-view
@@ -211,12 +223,12 @@
 (reg-event-fx
  :fetch-open-orders
  validate-spec
- (fn [{:keys [db]} [_]]
+ (fn [{:keys [db]} [_ instrument]]
    {:db db
     :http-with-hmac
     {:url btc-url :path "/order/open"
      :method :post
-     :body  {:currency "AUD" :instrument "ETH" :limit 10 :since 1}
+     :body  {:currency "AUD" :instrument (or instrument (:active-instrument db)) :limit 10 :since 1}
      :key (-> db :config :api-key)
      :secret (-> db :config :api-secret)
      :failure [:log]
@@ -228,3 +240,36 @@
  (fn [db [_ response]]
    (assoc db :orders (for [ord (:orders response)]
                        (reduce #(update %1 %2 / ROUND_NUM) ord [:volume :price :openVolume])))))
+
+(reg-event-fx
+ :exec-order
+ validate-spec
+ (fn [{:keys[db]} [_ new-order]]
+   {:db db
+    :http-with-hmac
+    {:url btc-url :path "/order/create"
+     :method :post
+     :body (-> new-order
+               (assoc :currency "AUD" :clientRequestId (str "ord-" (js/Date.now)))
+               (update :price * ROUND_NUM)
+               (update :volume * ROUND_NUM)
+               (select-keys [:currency :instrument :price :volume :orderSide
+                             :ordertype :clientRequestId]))
+     :key (-> db :config :api-key)
+     :secret (-> db :config :api-secret)
+     :failure [:log]
+     :success [:pop-view identity]}}))
+
+(reg-event-fx
+ :cancel-order
+ validate-spec
+ (fn [{:keys[db]} [_ id]]
+   {:db db
+    :http-with-hmac
+    {:url btc-url :path "/order/cancel"
+     :method :post
+     :body {:orderIds [id]}
+     :key (-> db :config :api-key)
+     :secret (-> db :config :api-secret)
+     :failure [:log]
+     :success [:fetch-open-orders]}}))
